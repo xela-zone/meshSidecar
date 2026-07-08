@@ -374,7 +374,7 @@
             done
 
             ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up --ssh --accept-dns=true --hostname="$MESH_NAME" --authkey="file:$CREDENTIALS_DIRECTORY/auth-key"
-            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" $EXPOSE_TYPE --bg https / http://127.0.0.1:$SERVE_PORT
+            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" $EXPOSE_TYPE --bg http://127.0.0.1:$SERVE_PORT
           ''} %i";
           NoNewPrivileges = true;
           # PrivateUsers = true; # Needs to be root for network stuff, but can we grant these privs another way?
