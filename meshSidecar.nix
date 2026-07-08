@@ -68,13 +68,14 @@
             description = "Hostname to use on the mesh network. Defaults to service name.";
           };
           servePort = lib.mkOption {
-            type = lib.types.port;
-            description = "Local port to proxy (remaps 443 -> servePort internally).";
+            type = lib.types.nullOr lib.types.port;
+            default = null;
+            description = "Local port to proxy (remaps 443 -> servePort internally). Not required for exposeType 'client'.";
           };
           exposeType = lib.mkOption {
-            type = lib.types.enum ["serve" "funnel"];
+            type = lib.types.enum ["serve" "funnel" "client"];
             default = "serve";
-            description = "Whether to use 'serve' (Tailnet only) or 'funnel' (Public) for security.";
+            description = "How to expose the service: 'serve' (tailnet only), 'funnel' (public), or 'client' (egress-only, joins mesh without serving anything).";
           };
         };
       });
@@ -374,7 +375,9 @@
             done
 
             ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up --ssh --accept-dns=true --hostname="$MESH_NAME" --authkey="file:$CREDENTIALS_DIRECTORY/auth-key"
-            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" $EXPOSE_TYPE --bg http://127.0.0.1:$SERVE_PORT
+            if [ "$EXPOSE_TYPE" != "client" ]; then
+              ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" $EXPOSE_TYPE --bg http://127.0.0.1:$SERVE_PORT
+            fi
           ''} %i";
           NoNewPrivileges = true;
           # PrivateUsers = true; # Needs to be root for network stuff, but can we grant these privs another way?
