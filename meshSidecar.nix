@@ -21,8 +21,9 @@
     };
 
     outboundInterface = lib.mkOption {
-      type = lib.types.str;
-      description = "Name of the outbound network interface.";
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Name of the outbound network interface. If not set, it will be autodetected at runtime.";
     };
 
     bridgeName = lib.mkOption {
@@ -66,6 +67,15 @@
             default = null;
             description = "Hostname to use on the mesh network. Defaults to service name.";
           };
+          servePort = lib.mkOption {
+            type = lib.types.port;
+            description = "Local port to proxy (remaps 443 -> servePort internally).";
+          };
+          exposeType = lib.mkOption {
+            type = lib.types.enum ["serve" "funnel"];
+            default = "serve";
+            description = "Whether to use 'serve' (Tailnet only) or 'funnel' (Public) for security.";
+          };
         };
       });
       default = {};
@@ -89,8 +99,8 @@
     # Bind required bins
     ip = "${pkgs.iproute2}/bin/ip";
     iptables = "${pkgs.iptables}/bin/iptables";
-    mount = "${pkgs.utillinux}/bin/mount";
-    umount = "${pkgs.utillinux}/bin/umount";
+    mount = "${pkgs.util-linux}/bin/mount";
+    umount = "${pkgs.util-linux}/bin/umount";
     udhcpd = "${pkgs.busybox}/bin/udhcpd";
     udhcpc = "${pkgs.busybox}/bin/udhcpc";
     # Bind required libs
@@ -127,6 +137,10 @@
       else k)
     cfg.services;
     meshNameMapJSON = builtins.toJSON meshNameMap;
+    servePortMap = lib.mapAttrs (k: v: v.servePort) cfg.services;
+    servePortMapJSON = builtins.toJSON servePortMap;
+    exposeTypeMap = lib.mapAttrs (k: v: v.exposeType) cfg.services;
+    exposeTypeMapJSON = builtins.toJSON exposeTypeMap;
     moduleServices = {
       "systemdbridge" = {
         before = ["network.target"];
@@ -144,17 +158,27 @@
               set -x
               # TODO: export needed?
               export PATH=${pkgs.busybox}/bin
+
+              OUTBOUND_IF="${if cfg.outboundInterface != null then cfg.outboundInterface else ""}"
+              if [ -z "$OUTBOUND_IF" ]; then
+                OUTBOUND_IF=$(${ip} route show | grep default | awk '{print $5}' | head -n1)
+              fi
+              if [ -z "$OUTBOUND_IF" ]; then
+                echo "Error: Could not autodetect outbound interface." >&2
+                exit 1
+              fi
+
               ${ip} link add ${cfg.bridgeName} type bridge
               ${ip} addr add ${cfg.bridgeCidr} dev ${cfg.bridgeName}
               ${ip} link set ${cfg.bridgeName} up
               # Enable NAT
               # TODO: add -s (e.g. 192.168.222.0/24, may need cfg changes for how we pass this info)
-              ${iptables} -t nat -A POSTROUTING -o ${cfg.outboundInterface} -j MASQUERADE
+              ${iptables} -t nat -A POSTROUTING -o "$OUTBOUND_IF" -j MASQUERADE
               # Allow outbound traffic from our bridge and private services
-              ${iptables} -A FORWARD -i ${cfg.bridgeName} -o ${cfg.outboundInterface} -j ACCEPT
+              ${iptables} -A FORWARD -i ${cfg.bridgeName} -o "$OUTBOUND_IF" -j ACCEPT
               # Allow return traffic
-              ${iptables} -A FORWARD -i ${cfg.outboundInterface} -o ${cfg.bridgeName} -m state --state RELATED,ESTABLISHED -j ACCEPT
-              ${iptables} -A FORWARD -i ${cfg.outboundInterface} -o ${cfg.bridgeName} -j DROP
+              ${iptables} -A FORWARD -i "$OUTBOUND_IF" -o ${cfg.bridgeName} -m state --state RELATED,ESTABLISHED -j ACCEPT
+              ${iptables} -A FORWARD -i "$OUTBOUND_IF" -o ${cfg.bridgeName} -j DROP
               # Allow DHCP (N.B. -I for accept to handle nixos-fw being active)
               ${iptables} -I INPUT -i ${cfg.bridgeName} -p udp --dport 67 -j ACCEPT
               ${iptables} -A INPUT -i ${cfg.bridgeName} -j DROP
@@ -165,13 +189,21 @@
           ExecStop = "${
             writeDash "${cfg.bridgeName}-down" ''
               set -x
+
+              OUTBOUND_IF="${if cfg.outboundInterface != null then cfg.outboundInterface else ""}"
+              if [ -z "$OUTBOUND_IF" ]; then
+                OUTBOUND_IF=$(${ip} route show | grep default | awk '{print $5}' | head -n1)
+              fi
+
               # Delete bridge
               ${ip} link del ${cfg.bridgeName}
               # Cleanup leftover iptables rules
-              ${iptables} -t nat -D POSTROUTING -o ${cfg.outboundInterface} -j MASQUERADE
-              ${iptables} -D FORWARD -i ${cfg.bridgeName} -o ${cfg.outboundInterface} -j ACCEPT
-              ${iptables} -D FORWARD -i ${cfg.outboundInterface} -o ${cfg.bridgeName} -m state --state RELATED,ESTABLISHED -j ACCEPT
-              ${iptables} -D FORWARD -i ${cfg.outboundInterface} -o ${cfg.bridgeName} -j DROP
+              if [ -n "$OUTBOUND_IF" ]; then
+                ${iptables} -t nat -D POSTROUTING -o "$OUTBOUND_IF" -j MASQUERADE
+                ${iptables} -D FORWARD -i ${cfg.bridgeName} -o "$OUTBOUND_IF" -j ACCEPT
+                ${iptables} -D FORWARD -i "$OUTBOUND_IF" -o ${cfg.bridgeName} -m state --state RELATED,ESTABLISHED -j ACCEPT
+                ${iptables} -D FORWARD -i "$OUTBOUND_IF" -o ${cfg.bridgeName} -j DROP
+              fi
               ${iptables} -D INPUT -i ${cfg.bridgeName} -p udp --dport 67 -j ACCEPT
               ${iptables} -D INPUT -i ${cfg.bridgeName} -j DROP
             ''
@@ -328,9 +360,21 @@
           ExecStart = "${writeDash "tailscale-up" ''
             set -x
             MESH_NAME=$(echo '${meshNameMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // $service')
+            SERVE_PORT=$(echo '${servePortMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service]')
+            EXPOSE_TYPE=$(echo '${exposeTypeMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service]')
             # ${pkgs.tailscale}/bin/tailscaled -state 'mem:' &
             ${pkgs.tailscale}/bin/tailscaled -statedir "$STATE_DIRECTORY" -socket "$RUNTIME_DIRECTORY/tailscaled.sock" &
+
+            # Wait for tailscaled socket to be ready
+            for i in {1..20}; do
+              if [ -S "$RUNTIME_DIRECTORY/tailscaled.sock" ]; then
+                break
+              fi
+              sleep 0.5
+            done
+
             ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up --ssh --accept-dns=true --hostname="$MESH_NAME" --authkey="file:$CREDENTIALS_DIRECTORY/auth-key"
+            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" $EXPOSE_TYPE --bg https / http://127.0.0.1:$SERVE_PORT
           ''} %i";
           NoNewPrivileges = true;
           # PrivateUsers = true; # Needs to be root for network stuff, but can we grant these privs another way?
