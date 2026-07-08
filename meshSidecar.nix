@@ -389,7 +389,7 @@
           ProtectControlGroups = false;
           # Places to keep things
           RuntimeDirectory = "tailscale_%i";
-          StateDirectory = "tailscale_%i";
+          StateDirectory = "ts_mesh/%i";
           ConfigurationDirectory = "tailscale_%i";
           TemporaryFileSystem = /etc;
           BindReadOnlyPaths = concatStringsSep " " [
@@ -403,7 +403,7 @@
           BindPaths = concatStringsSep " " [
             # use tailscale_%i instead of netbird for storage
             "/run/tailscale_%i:/run/tailscale"
-            "/var/lib/tailscale_%i:/var/lib/tailscale"
+            "/var/lib/ts_mesh/%i:/var/lib/tailscale"
             "/etc/tailscale_%i:/etc/tailscale"
             # network namespace (for resolv etc, and to further isolate)
             "/etc/netns/%i/resolv.conf:/etc/resolv.conf"
