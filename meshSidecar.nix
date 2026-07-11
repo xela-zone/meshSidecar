@@ -160,9 +160,22 @@
               # TODO: export needed?
               export PATH=${pkgs.busybox}/bin
 
-              OUTBOUND_IF="${if cfg.outboundInterface != null then cfg.outboundInterface else ""}"
+              OUTBOUND_IF="${
+                if cfg.outboundInterface != null
+                then cfg.outboundInterface
+                else ""
+              }"
               if [ -z "$OUTBOUND_IF" ]; then
-                OUTBOUND_IF=$(${ip} route show | grep default | awk '{print $5}' | head -n1)
+                echo "Outbound interface not specified, attempting autodetection..." >&2
+                i=0
+                while [ $i -lt 30 ]; do
+                  OUTBOUND_IF=$(${ip} route show | grep default | awk '{print $5}' | head -n1)
+                  if [ -n "$OUTBOUND_IF" ]; then
+                    break
+                  fi
+                  sleep 1
+                  i=$((i + 1))
+                done
               fi
               if [ -z "$OUTBOUND_IF" ]; then
                 echo "Error: Could not autodetect outbound interface." >&2
@@ -191,7 +204,11 @@
             writeDash "${cfg.bridgeName}-down" ''
               set -x
 
-              OUTBOUND_IF="${if cfg.outboundInterface != null then cfg.outboundInterface else ""}"
+              OUTBOUND_IF="${
+                if cfg.outboundInterface != null
+                then cfg.outboundInterface
+                else ""
+              }"
               if [ -z "$OUTBOUND_IF" ]; then
                 OUTBOUND_IF=$(${ip} route show | grep default | awk '{print $5}' | head -n1)
               fi
@@ -233,7 +250,7 @@
         description = "%i network namespace";
         partOf = ["netbird@%i.service" "tailscale@%i.service"];
         bindsTo = ["systemdbridge.service" "defaultnetns.service"];
-        after = ["defaultnetns.service"];
+        after = ["systemdbridge.service" "defaultnetns.service"];
         before = ["network.target"];
         serviceConfig = {
           Type = "oneshot";
