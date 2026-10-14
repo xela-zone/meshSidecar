@@ -87,6 +87,35 @@
             default = [];
             description = "Additional flags to pass to tailscale up.";
           };
+          ports = lib.mkOption {
+            type = lib.types.listOf (lib.types.submodule {
+              options = {
+                port = lib.mkOption {
+                  type = lib.types.port;
+                  description = "External port on the mesh node.";
+                };
+                targetPort = lib.mkOption {
+                  type = lib.types.nullOr lib.types.port;
+                  default = null;
+                  description = "Internal backend port on 127.0.0.1. Defaults to the same value as 'port'.";
+                };
+                type = lib.mkOption {
+                  type = lib.types.enum [ "serve" "funnel" "http" "tcp" "passthrough" ];
+                  default = "serve";
+                  description = ''
+                    How to expose the port:
+                    - 'serve': TLS-terminated HTTPS reverse proxy via Tailscale Serve (autogen certs).
+                    - 'funnel': Publicly accessible TLS-terminated HTTPS reverse proxy via Tailscale Funnel.
+                    - 'http': Unencrypted HTTP reverse proxy via Tailscale Serve.
+                    - 'tcp': Raw TCP packet forwarding via Tailscale Serve (--tcp).
+                    - 'passthrough': Direct listener in the network namespace (no Tailscale proxy, traffic routes directly to local socket).
+                  '';
+                };
+              };
+            });
+            default = [];
+            description = "Collection of ports to expose or pass through for this service.";
+          };
         };
       });
       default = {};
@@ -148,10 +177,24 @@
       else k)
     cfg.services;
     meshNameMapJSON = builtins.toJSON meshNameMap;
-    servePortMap = lib.mapAttrs (k: v: v.servePort) cfg.services;
-    servePortMapJSON = builtins.toJSON servePortMap;
-    exposeTypeMap = lib.mapAttrs (k: v: v.exposeType) cfg.services;
-    exposeTypeMapJSON = builtins.toJSON exposeTypeMap;
+    effectivePortsMap = lib.mapAttrs (_: service:
+      let
+        explicitPorts = service.ports;
+        has443 = builtins.any (p: p.port == 443) explicitPorts;
+        legacyPort = lib.optional (service.servePort != null && service.exposeType != "client" && !has443) {
+          port = 443;
+          targetPort = service.servePort;
+          type = service.exposeType;
+        };
+        combined = explicitPorts ++ legacyPort;
+      in
+        map (p: {
+          port = p.port;
+          targetPort = if p.targetPort != null then p.targetPort else p.port;
+          type = p.type;
+        }) combined
+    ) cfg.services;
+    effectivePortsMapJSON = builtins.toJSON effectivePortsMap;
     enableSSHMap = lib.mapAttrs (_: v: v.enableSSH) cfg.services;
     enableSSHMapJSON = builtins.toJSON enableSSHMap;
     extraUpFlagsMap = lib.mapAttrs (_: v: v.extraUpFlags) cfg.services;
@@ -392,10 +435,10 @@
           ExecStart = "${writeDash "tailscale-up" ''
             set -x
             MESH_NAME=$(echo '${meshNameMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // $service')
-            SERVE_PORT=$(echo '${servePortMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service]')
-            EXPOSE_TYPE=$(echo '${exposeTypeMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service]')
+            PORTS_JSON=$(echo '${effectivePortsMapJSON}' | ${pkgs.jq}/bin/jq -c --arg service "$1" '.[$service] // []')
             ENABLE_SSH=$(echo '${enableSSHMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // false')
             EXTRA_FLAGS=$(echo '${extraUpFlagsMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // [] | join(" ")')
+            TAILSCALE="${pkgs.tailscale}/bin/tailscale -socket $RUNTIME_DIRECTORY/tailscaled.sock"
             # ${pkgs.tailscale}/bin/tailscaled -state 'mem:' &
             ${pkgs.tailscale}/bin/tailscaled -statedir "$STATE_DIRECTORY" -socket "$RUNTIME_DIRECTORY/tailscaled.sock" &
 
@@ -412,15 +455,34 @@
               SSH_FLAG="--ssh"
             fi
 
-            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up \
+            $TAILSCALE up \
               $SSH_FLAG \
               --accept-dns=true \
               --hostname="$MESH_NAME" \
               --authkey="file:$CREDENTIALS_DIRECTORY/auth-key" \
               $EXTRA_FLAGS
-            if [ "$EXPOSE_TYPE" != "client" ]; then
-              ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" $EXPOSE_TYPE --bg http://127.0.0.1:$SERVE_PORT
-            fi
+
+            echo "$PORTS_JSON" | ${pkgs.jq}/bin/jq -r '.[] | "\(.port) \(.targetPort) \(.type)"' | while read -r PORT TARGET_PORT PORT_TYPE; do
+              [ -z "$PORT" ] && continue
+              case "$PORT_TYPE" in
+                serve|funnel)
+                  if [ "$PORT" = "443" ]; then
+                    $TAILSCALE $PORT_TYPE --bg "http://127.0.0.1:$TARGET_PORT"
+                  else
+                    $TAILSCALE $PORT_TYPE --bg --https="$PORT" "http://127.0.0.1:$TARGET_PORT"
+                  fi
+                  ;;
+                http)
+                  $TAILSCALE serve --bg --http="$PORT" "http://127.0.0.1:$TARGET_PORT"
+                  ;;
+                tcp)
+                  $TAILSCALE serve --bg --tcp="$PORT" "tcp://127.0.0.1:$TARGET_PORT"
+                  ;;
+                passthrough)
+                  echo "Port $PORT configured as direct netns passthrough (backend target: $TARGET_PORT)"
+                  ;;
+              esac
+            done
           ''} %i";
           NoNewPrivileges = true;
           # PrivateUsers = true; # Needs to be root for network stuff, but can we grant these privs another way?
