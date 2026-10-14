@@ -487,17 +487,19 @@
             # ${pkgs.tailscale}/bin/tailscaled -state 'mem:' &
             ${pkgs.tailscale}/bin/tailscaled -statedir "$STATE_DIRECTORY" -socket "$RUNTIME_DIRECTORY/tailscaled.sock" &
 
-            # Wait for tailscaled socket to be ready
-            for i in {1..20}; do
+            # Wait for tailscaled socket to be ready and backend state to initialize
+            for i in {1..30}; do
               if [ -S "$RUNTIME_DIRECTORY/tailscaled.sock" ]; then
-                break
+                BACKEND_STATE=$($TAILSCALE status --json 2>/dev/null | ${pkgs.jq}/bin/jq -r '.BackendState // empty')
+                if [ -n "$BACKEND_STATE" ] && [ "$BACKEND_STATE" != "NoState" ]; then
+                  break
+                fi
               fi
               sleep 0.5
             done
 
             IS_LOGGED_IN=false
-            BACKEND_STATE=$(${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" status --json 2>/dev/null | ${pkgs.jq}/bin/jq -r '.BackendState // empty')
-            if [ "$BACKEND_STATE" = "Running" ]; then
+            if [ "$BACKEND_STATE" = "Running" ] || [ "$BACKEND_STATE" = "Starting" ]; then
               IS_LOGGED_IN=true
             fi
 
@@ -557,6 +559,7 @@
             fi
 
             ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up \
+              --reset \
               $SSH_FLAG \
               --accept-dns=true \
               --hostname="$MESH_NAME" \
