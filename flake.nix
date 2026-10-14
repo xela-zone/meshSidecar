@@ -9,7 +9,7 @@
     self,
     nixpkgs,
   }: {
-    nixosModules.default = import ./meshSidecar.nix;
+    nixosModules.default = import ./modules;
     nixosModules.meshSidecar = self.nixosModules.default;
   };
 }
