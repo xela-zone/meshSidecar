@@ -77,6 +77,16 @@
             default = "serve";
             description = "How to expose the service: 'serve' (tailnet only), 'funnel' (public), or 'client' (egress-only, joins mesh without serving anything).";
           };
+          enableSSH = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Whether to pass --ssh to tailscale up. Defaults to false (sidecars do not need Tailscale SSH).";
+          };
+          extraUpFlags = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [];
+            description = "Additional flags to pass to tailscale up.";
+          };
         };
       });
       default = {};
@@ -142,6 +152,10 @@
     servePortMapJSON = builtins.toJSON servePortMap;
     exposeTypeMap = lib.mapAttrs (k: v: v.exposeType) cfg.services;
     exposeTypeMapJSON = builtins.toJSON exposeTypeMap;
+    enableSSHMap = lib.mapAttrs (_: v: v.enableSSH) cfg.services;
+    enableSSHMapJSON = builtins.toJSON enableSSHMap;
+    extraUpFlagsMap = lib.mapAttrs (_: v: v.extraUpFlags) cfg.services;
+    extraUpFlagsMapJSON = builtins.toJSON extraUpFlagsMap;
     moduleServices = {
       "systemdbridge" = {
         before = ["network.target"];
@@ -380,6 +394,8 @@
             MESH_NAME=$(echo '${meshNameMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // $service')
             SERVE_PORT=$(echo '${servePortMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service]')
             EXPOSE_TYPE=$(echo '${exposeTypeMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service]')
+            ENABLE_SSH=$(echo '${enableSSHMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // false')
+            EXTRA_FLAGS=$(echo '${extraUpFlagsMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // [] | join(" ")')
             # ${pkgs.tailscale}/bin/tailscaled -state 'mem:' &
             ${pkgs.tailscale}/bin/tailscaled -statedir "$STATE_DIRECTORY" -socket "$RUNTIME_DIRECTORY/tailscaled.sock" &
 
@@ -391,7 +407,17 @@
               sleep 0.5
             done
 
-            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up --ssh --accept-dns=true --hostname="$MESH_NAME" --authkey="file:$CREDENTIALS_DIRECTORY/auth-key"
+            SSH_FLAG=""
+            if [ "$ENABLE_SSH" = "true" ]; then
+              SSH_FLAG="--ssh"
+            fi
+
+            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up \
+              $SSH_FLAG \
+              --accept-dns=true \
+              --hostname="$MESH_NAME" \
+              --authkey="file:$CREDENTIALS_DIRECTORY/auth-key" \
+              $EXTRA_FLAGS
             if [ "$EXPOSE_TYPE" != "client" ]; then
               ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" $EXPOSE_TYPE --bg http://127.0.0.1:$SERVE_PORT
             fi
