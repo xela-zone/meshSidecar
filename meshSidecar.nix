@@ -16,8 +16,42 @@
 
     # TODO: support providing multiple, tied to service. support multiple mesh providers at once?
     authKeyFile = lib.mkOption {
-      type = lib.types.path;
+      type = lib.types.nullOr lib.types.path;
+      default = null;
       description = "Path to key file for mesh provider auth.";
+    };
+
+    oauth = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enable automatic OAuth client token exchange to dynamically mint Tailscale auth keys.";
+      };
+      clientIdFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Path to file containing Tailscale OAuth Client ID.";
+      };
+      clientSecretFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Path to file containing Tailscale OAuth Client Secret.";
+      };
+      tags = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = ["tag:server"];
+        description = "Tags to assign to minted auth keys.";
+      };
+      tailnet = lib.mkOption {
+        type = lib.types.str;
+        default = "-";
+        description = "Tailnet identifier to create auth keys in ('-' defaults to current tailnet of OAuth token).";
+      };
+      keyExpirySeconds = lib.mkOption {
+        type = lib.types.int;
+        default = 3600;
+        description = "Lifetime in seconds of minted auth keys (default 1 hour).";
+      };
     };
 
     outboundInterface = lib.mkOption {
@@ -382,7 +416,10 @@
         serviceConfig = {
           Type = "simple";
           RemainAfterExit = true;
-          LoadCredential = "auth-key:${cfg.authKeyFile}";
+          LoadCredential =
+            if cfg.authKeyFile != null
+            then ["auth-key:${cfg.authKeyFile}"]
+            else [];
           ExecStart = "${writeDash "netbird-up" ''
             set -x
             MESH_NAME=$(echo '${meshNameMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // $service')
@@ -431,7 +468,15 @@
         serviceConfig = {
           Type = "simple";
           RemainAfterExit = true;
-          LoadCredential = "auth-key:${cfg.authKeyFile}";
+          LoadCredential =
+            if cfg.oauth.enable
+            then [
+              "client-id:${cfg.oauth.clientIdFile}"
+              "client-secret:${cfg.oauth.clientSecretFile}"
+            ]
+            else if cfg.authKeyFile != null
+            then ["auth-key:${cfg.authKeyFile}"]
+            else [];
           ExecStart = "${writeDash "tailscale-up" ''
             set -x
             MESH_NAME=$(echo '${meshNameMapJSON}' | ${pkgs.jq}/bin/jq -r --arg service "$1" '.[$service] // $service')
@@ -450,16 +495,72 @@
               sleep 0.5
             done
 
+            IS_LOGGED_IN=false
+            BACKEND_STATE=$(${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" status --json 2>/dev/null | ${pkgs.jq}/bin/jq -r '.BackendState // empty')
+            if [ "$BACKEND_STATE" = "Running" ]; then
+              IS_LOGGED_IN=true
+            fi
+
+            AUTH_FLAG=""
+            if [ "$IS_LOGGED_IN" = "true" ]; then
+              AUTH_FLAG=""
+            elif [ -n "$CREDENTIALS_DIRECTORY" ] && [ -f "$CREDENTIALS_DIRECTORY/client-id" ] && [ -f "$CREDENTIALS_DIRECTORY/client-secret" ]; then
+              CLIENT_ID=$(${pkgs.coreutils}/bin/tr -d '[:space:]' < "$CREDENTIALS_DIRECTORY/client-id")
+              CLIENT_SECRET=$(${pkgs.coreutils}/bin/tr -d '[:space:]' < "$CREDENTIALS_DIRECTORY/client-secret")
+              TOKEN_RESP=$(${pkgs.curl}/bin/curl -s -f -X POST "https://api.tailscale.com/api/v2/oauth/token" \
+                -d "client_id=$CLIENT_ID" \
+                -d "client_secret=$CLIENT_SECRET")
+              ACCESS_TOKEN=$(echo "$TOKEN_RESP" | ${pkgs.jq}/bin/jq -r '.access_token // empty')
+              if [ -z "$ACCESS_TOKEN" ]; then
+                echo "Error: Failed to obtain Tailscale OAuth access token" >&2
+                exit 1
+              fi
+
+              KEY_PAYLOAD=$(${pkgs.jq}/bin/jq -n \
+                --arg desc "meshSidecar auto-minted for $1" \
+                --argjson tags '${builtins.toJSON cfg.oauth.tags}' \
+                --argjson expiry ${toString cfg.oauth.keyExpirySeconds} \
+                '{
+                  capabilities: {
+                    devices: {
+                      create: {
+                        reusable: false,
+                        ephemeral: false,
+                        tags: $tags,
+                        preauthorized: true
+                      }
+                    }
+                  },
+                  expirySeconds: $expiry,
+                  description: $desc
+                }')
+
+              KEY_RESP=$(${pkgs.curl}/bin/curl -s -f -X POST "https://api.tailscale.com/api/v2/tailnet/${cfg.oauth.tailnet}/keys" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$KEY_PAYLOAD")
+              AUTH_KEY=$(echo "$KEY_RESP" | ${pkgs.jq}/bin/jq -r '.key // empty')
+              if [ -z "$AUTH_KEY" ]; then
+                echo "Error: Failed to obtain Tailscale auth key from API" >&2
+                exit 1
+              fi
+              AUTH_FLAG="--authkey=$AUTH_KEY"
+            elif [ -n "$CREDENTIALS_DIRECTORY" ] && [ -f "$CREDENTIALS_DIRECTORY/auth-key" ]; then
+              AUTH_FLAG="--authkey=file:$CREDENTIALS_DIRECTORY/auth-key"
+            else
+              AUTH_FLAG=""
+            fi
+
             SSH_FLAG=""
             if [ "$ENABLE_SSH" = "true" ]; then
               SSH_FLAG="--ssh"
             fi
 
-            $TAILSCALE up \
+            ${pkgs.tailscale}/bin/tailscale -socket "$RUNTIME_DIRECTORY/tailscaled.sock" up \
               $SSH_FLAG \
               --accept-dns=true \
               --hostname="$MESH_NAME" \
-              --authkey="file:$CREDENTIALS_DIRECTORY/auth-key" \
+              $AUTH_FLAG \
               $EXTRA_FLAGS
 
             echo "$PORTS_JSON" | ${pkgs.jq}/bin/jq -r '.[] | "\(.port) \(.targetPort) \(.type)"' | while read -r PORT TARGET_PORT PORT_TYPE; do
