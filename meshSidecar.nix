@@ -456,8 +456,8 @@
           ];
           DeviceAllow = ["/dev/net/tun rw"];
           # Give only the needed capability
-          CapabilityBoundingSet = ["CAP_NET_ADMIN" "CAP_SYS_MODULE"];
-          AmbientCapabilities = ["CAP_NET_ADMIN" "CAP_SYS_MODULE"];
+          CapabilityBoundingSet = ["CAP_NET_ADMIN" "CAP_SYS_MODULE" "CAP_NET_BIND_SERVICE"];
+          AmbientCapabilities = ["CAP_NET_ADMIN" "CAP_SYS_MODULE" "CAP_NET_BIND_SERVICE"];
         };
       };
     };
