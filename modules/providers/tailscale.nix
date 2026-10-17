@@ -21,10 +21,12 @@ in {
       partOf = ["%i.service"];
       bindsTo = ["netns@%i.service"];
       after = ["netns@%i.service"];
-      unitConfig.JoinsNamespaceOf = "netns@%i.service";
+      unitConfig = {
+        JoinsNamespaceOf = "netns@%i.service";
+        StopWhenUnneeded = true;
+      };
       serviceConfig = {
         Type = "simple";
-        RemainAfterExit = true;
         LoadCredential =
           if cfg.oauth.enable
           then [
@@ -43,6 +45,7 @@ in {
           TAILSCALE="${pkgs.tailscale}/bin/tailscale -socket $RUNTIME_DIRECTORY/tailscaled.sock"
           # ${pkgs.tailscale}/bin/tailscaled -state 'mem:' &
           ${pkgs.tailscale}/bin/tailscaled -statedir "$STATE_DIRECTORY" -socket "$RUNTIME_DIRECTORY/tailscaled.sock" &
+          TAILSCALED_PID=$!
 
           # Wait for tailscaled socket to be ready and backend state to initialize
           for i in {1..30}; do
@@ -144,6 +147,8 @@ in {
                 ;;
             esac
           done
+
+          wait "$TAILSCALED_PID"
         ''} %i";
         NoNewPrivileges = true;
         PrivateNetwork = true;

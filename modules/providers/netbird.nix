@@ -17,10 +17,12 @@ in {
       partOf = ["%i.service"];
       bindsTo = ["netns@%i.service"];
       after = ["netns@%i.service"];
-      unitConfig.JoinsNamespaceOf = "netns@%i.service";
+      unitConfig = {
+        JoinsNamespaceOf = "netns@%i.service";
+        StopWhenUnneeded = true;
+      };
       serviceConfig = {
         Type = "simple";
-        RemainAfterExit = true;
         LoadCredential =
           if cfg.authKeyFile != null
           then ["auth-key:${cfg.authKeyFile}"]

@@ -37,6 +37,7 @@ in {
       bindsTo = ["systemdbridge.service" "defaultnetns.service"];
       after = ["systemdbridge.service" "defaultnetns.service"];
       before = ["network.target"];
+      unitConfig.StopWhenUnneeded = true;
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
