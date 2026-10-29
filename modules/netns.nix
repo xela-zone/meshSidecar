@@ -41,6 +41,8 @@ in {
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        Restart = "on-failure";
+        RestartSec = 2;
         PrivateNetwork = true;
         ConfigurationDirectory = "netns/%i";
         PrivateMounts = false; # TODO...
@@ -71,8 +73,7 @@ in {
               touch "/etc/netns/$1/resolv.conf"
               # TODO: to replace ip netns exec
               ${mount} --bind "/etc/netns/$1/resolv.conf" /etc/resolv.conf
-              #${ip} netns exec "$1" ${udhcpc} -f -q -n -t 3 -T 3 -i eth0
-              ${udhcpc} -f -q -n -t 3 -T 3 -i eth0
+              ${udhcpc} -f -q -n -t 5 -T 3 -i eth0
               # TODO: patch udhcpc to only overwrite when dns option is present
               # until then, we just overwrite after it runs
               # TODO: needs magic dns if we want tailscale to manage, if non-empty.

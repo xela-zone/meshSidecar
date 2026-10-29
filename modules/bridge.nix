@@ -71,7 +71,7 @@ in {
             # Clean stale leases on bridge startup to avoid IP exhaustion
             rm -f /run/systemdbridge/udhcpd.leases
             touch /run/systemdbridge/udhcpd.leases
-            ${udhcpd} -f ${writeText "udhcpd-cfg" ''
+            ${udhcpd} -f -a 0 ${writeText "udhcpd-cfg" ''
               interface ${cfg.bridgeName}
               start ${dhcpStart}
               end ${dhcpEnd}
