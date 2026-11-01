@@ -59,7 +59,7 @@ in {
           done
 
           IS_LOGGED_IN=false
-          if [ "$BACKEND_STATE" = "Running" ] || [ "$BACKEND_STATE" = "Starting" ]; then
+          if [ "$BACKEND_STATE" != "NeedsLogin" ] && [ -f "$STATE_DIRECTORY/tailscaled.state" ]; then
             IS_LOGGED_IN=true
           fi
 
@@ -69,7 +69,13 @@ in {
           elif [ -n "$CREDENTIALS_DIRECTORY" ] && [ -f "$CREDENTIALS_DIRECTORY/client-id" ] && [ -f "$CREDENTIALS_DIRECTORY/client-secret" ]; then
             CLIENT_ID=$(${pkgs.coreutils}/bin/tr -d '[:space:]' < "$CREDENTIALS_DIRECTORY/client-id")
             CLIENT_SECRET=$(${pkgs.coreutils}/bin/tr -d '[:space:]' < "$CREDENTIALS_DIRECTORY/client-secret")
-            TOKEN_RESP=$(${pkgs.curl}/bin/curl -s -f -X POST "https://api.tailscale.com/api/v2/oauth/token" \
+            TOKEN_RESP=$(${pkgs.curl}/bin/curl -s -f \
+              --connect-timeout 5 \
+              --max-time 15 \
+              --retry 3 \
+              --retry-delay 1 \
+              --retry-all-errors \
+              -X POST "https://api.tailscale.com/api/v2/oauth/token" \
               -d "client_id=$CLIENT_ID" \
               -d "client_secret=$CLIENT_SECRET")
             ACCESS_TOKEN=$(echo "$TOKEN_RESP" | ${pkgs.jq}/bin/jq -r '.access_token // empty')
@@ -97,7 +103,13 @@ in {
                 description: $desc
               }')
 
-            KEY_RESP=$(${pkgs.curl}/bin/curl -s -f -X POST "https://api.tailscale.com/api/v2/tailnet/${cfg.oauth.tailnet}/keys" \
+            KEY_RESP=$(${pkgs.curl}/bin/curl -s -f \
+              --connect-timeout 5 \
+              --max-time 15 \
+              --retry 3 \
+              --retry-delay 1 \
+              --retry-all-errors \
+              -X POST "https://api.tailscale.com/api/v2/tailnet/${cfg.oauth.tailnet}/keys" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$KEY_PAYLOAD")
