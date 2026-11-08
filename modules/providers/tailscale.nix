@@ -20,10 +20,10 @@ in {
       enable = true;
       partOf = ["%i.service"];
       bindsTo = ["netns@%i.service"];
+      requires = ["netns@%i.service"];
       after = ["netns@%i.service"];
       unitConfig = {
         JoinsNamespaceOf = "netns@%i.service";
-        StopWhenUnneeded = true;
       };
       serviceConfig = {
         Type = "simple";

@@ -49,12 +49,9 @@ in {
         bindsTo = ["systemdbridge.service" "defaultnetns.service"];
         after = ["systemdbridge.service" "defaultnetns.service"];
         before = ["network.target"];
-        unitConfig.StopWhenUnneeded = true;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
-          Restart = "on-failure";
-          RestartSec = 2;
           PrivateNetwork = true;
           ConfigurationDirectory = "netns/%i";
           PrivateMounts = false; # TODO...

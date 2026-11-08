@@ -13,6 +13,7 @@
   serviceOverrides =
     lib.mapAttrs (serviceName: serviceConfig: {
       bindsTo = [providerService];
+      requires = [providerService];
       after = [providerService];
       unitConfig.JoinsNamespaceOf = providerService;
       # doesn't change based on mesh provider
