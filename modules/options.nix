@@ -84,9 +84,28 @@
       default = ["192.168.222.2" "192.168.222.254"];
     };
 
+    nameservers = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default =
+        if config.networking.nameservers != []
+        then config.networking.nameservers
+        else ["1.1.1.1" "1.0.0.1"];
+      defaultText = lib.literalExpression ''
+        if config.networking.nameservers != []
+        then config.networking.nameservers
+        else ["1.1.1.1" "1.0.0.1"]
+      '';
+      description = "DNS nameservers for sidecars. Defaults to config.networking.nameservers if set, otherwise Cloudflare (1.1.1.1, 1.0.0.1).";
+    };
+
     services = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
         options = {
+          ip = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Static IP address for this sidecar (e.g. '192.168.222.10'). If null, falls back to udhcpc.";
+          };
           meshName = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
