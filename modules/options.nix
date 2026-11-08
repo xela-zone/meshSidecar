@@ -99,12 +99,16 @@
     };
 
     services = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.submodule {
+      type = lib.types.attrsOf (lib.types.submodule ({name, ...}: {
         options = {
           ip = lib.mkOption {
-            type = lib.types.nullOr lib.types.str;
-            default = null;
-            description = "Static IP address for this sidecar (e.g. '192.168.222.10'). If null, falls back to udhcpc.";
+            type = lib.types.str;
+            default = let
+              hex = builtins.substring 0 4 (builtins.hashString "sha256" name);
+              int = lib.fromHexString hex;
+              slot = 2 + (lib.mod int 250);
+            in "192.168.222.${toString slot}";
+            description = "Static IP address for this sidecar on the bridge.";
           };
           meshName = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
@@ -161,7 +165,7 @@
             description = "Collection of ports to expose or pass through for this service.";
           };
         };
-      });
+      }));
       default = {};
       description = "Services to wrap with mesh networking";
     };
