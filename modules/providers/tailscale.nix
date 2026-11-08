@@ -48,7 +48,9 @@ in {
           TAILSCALED_PID=$!
 
           # Wait for tailscaled socket to be ready and backend state to initialize
-          for i in {1..30}; do
+          WAIT_COUNT=0
+          BACKEND_STATE=""
+          while [ "$WAIT_COUNT" -lt 30 ]; do
             if [ -S "$RUNTIME_DIRECTORY/tailscaled.sock" ]; then
               BACKEND_STATE=$($TAILSCALE status --json 2>/dev/null | ${pkgs.jq}/bin/jq -r '.BackendState // empty')
               if [ -n "$BACKEND_STATE" ] && [ "$BACKEND_STATE" != "NoState" ]; then
@@ -56,10 +58,11 @@ in {
               fi
             fi
             sleep 0.5
+            WAIT_COUNT=$((WAIT_COUNT + 1))
           done
 
           IS_LOGGED_IN=false
-          if [ "$BACKEND_STATE" != "NeedsLogin" ] && [ -f "$STATE_DIRECTORY/tailscaled.state" ]; then
+          if [ "$BACKEND_STATE" = "Running" ] || [ "$BACKEND_STATE" = "Starting" ] || [ "$BACKEND_STATE" = "Stopped" ]; then
             IS_LOGGED_IN=true
           fi
 
