@@ -45,7 +45,7 @@ in {
 
       "netns@" = {
         description = "%i network namespace";
-        partOf = ["netbird@%i.service" "tailscale@%i.service"];
+        partOf = ["tailscale@%i.service"];
         bindsTo = ["systemdbridge.service" "defaultnetns.service"];
         after = ["systemdbridge.service" "defaultnetns.service"];
         before = ["network.target"];
@@ -94,11 +94,6 @@ in {
                                     ${udhcpc} -f -q -n -t 5 -T 3 -i eth0
                                   fi
               ''
-              + (
-                if cfg.provider == "netbird"
-                then "\n${ip} netns exec default cat /etc/resolv.conf > /etc/netns/\"$1\"/resolv.conf\n"
-                else ""
-              ))
           } %i";
           ExecStopPost = "${
             writeDash "netns-down" ''

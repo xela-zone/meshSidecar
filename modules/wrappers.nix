@@ -5,10 +5,7 @@
 }: let
   cfg = config.services.meshSidecar;
 
-  providerService =
-    if cfg.provider == "netbird"
-    then "netbird@%N.service"
-    else "tailscale@%N.service";
+  providerService = "tailscale@%N.service";
 
   serviceOverrides =
     lib.mapAttrs (serviceName: serviceConfig: {

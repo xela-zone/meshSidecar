@@ -9,8 +9,8 @@
     enable = lib.mkEnableOption "meshSidecar module";
 
     provider = lib.mkOption {
-      type = lib.types.enum ["tailscale" "netbird"];
-      description = ''Mesh network service provider e.g. currently "tailscale" or "netbird".'';
+      type = lib.types.enum ["tailscale"];
+      description = ''Mesh network service provider (currently only "tailscale").'';
       default = "tailscale";
     };
 
