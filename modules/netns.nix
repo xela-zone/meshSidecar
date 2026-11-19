@@ -58,7 +58,7 @@ in {
           # TODO: make per-service configurable
           PrivateTmp = true;
           ExecStart = "${
-            writeDash "netns-up" (''
+            writeDash "netns-up" ''
                                   set -x
                                   # Linux interface name max is 15 char
                                   VETH_NAME=$(printf "%.15s" "$1")
